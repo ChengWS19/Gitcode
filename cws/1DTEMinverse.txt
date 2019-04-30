@@ -1,0 +1,150 @@
+function oneinverse_01()
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% 该程序使用为遗传算法结合阻尼最小二乘法进行一维瞬变电磁反演
+% 反演过程中 ，以遗传算法得到的结果作为初始模型，而后使用阻尼最小二乘法求解
+% 遗传算法获得的是初始模型的层厚度，模型的层电阻率用全区视电阻率得到
+%%%%%%%%%% %%%%%%%%%%%%%%% 
+clear all
+tic
+load  H_singal.dat
+t=H_singal(:,1);
+tbz=H_singal(:,2);
+len=length(t);   % 统计观测时间的道数
+a=50;
+ps=pquan(a,t,tbz);
+ps
+popsize=40;    % 设定种群的大小
+numv=len;          % 设定变量的个数 与观测时间个数相同
+piecechromlen=zeros(1,len);
+piecechromlen(:)=9;     % 设定等位基因的长度视变量的变化范围而定
+chromlength=sum(piecechromlen);   % 设定染色体的长度，41个厚度，每个电阻率占9个位 变化范围1：512
+ksai=0.05;          % 设定收敛误差
+pc=0.4;                %交叉概率
+pm=0.3;               % 变异概率
+diver0=0;               % 统计种群中的最小偏差大小
+count=0;               % 迭代步数计数
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+tempbest=zeros(1,chromlength);   % 最优个体编码保存变量
+pop=zeros(popsize,chromlength);     % 预设种群的大小
+pop=initpop(popsize,chromlength) ;  % 初始化种群；
+%depop=decodechrom(pop,numv,piecechromlen) ; %初始种群解码 （多余，计算目标函数时再解码）
+objvalue=calobjvalue(tbz,a,ps,pop,popsize,numv,piecechromlen) ;% 计算目标函数的大小
+ diver0=min(objvalue);  % 目标函数中最小的值
+ diver0
+ itermax=40;  % 最大的迭代次数
+ diver=r0and(itermax,1); % 记录每一代中最优良个体的偏差，先赋值为一组随机数
+ while(diver0>=ksai && count<=0 )
+   
+   fitvalue=calfitvalue(objvalue);                        % 计算适应度值的大小
+   [newpop,tempbest]=selection(pop,fitvalue) ;                        % 选择函数
+   pop=crossover(newpop,pc);                                % 交叉函数
+   newpop=mutation(pop,pm,tempbest) ;                                %变异函数
+ % depop=decodechrom(newpop,numv,piecechromlen) ; %初始种群解码 （多余，计算目标函数时解码）
+   objvalue=calobjvalue(tbz,a,ps,newpop,popsize,numv,piecechromlen) ;% 计算目标函数的大小
+   diver0=min(objvalue);  % 目标函数中最小的值
+   diver0
+   count=count+1;
+   diver(count)=diver0; % 将当前的最优良个体的偏差记录
+   pop=newpop;
+ end
+ [bestindividual,bestfit]=best(pop,objvalue,numv,piecechromlen);%选取最大适应度个体及其对应的适应度值
+ bestindividual=bestindividual/5120*a;
+  initialmodel=[ps;bestindividual];
+  [layp,h]=inverseresult(ps,initialmodel,a,t);
+  bz=onerespon(layp,h,a);
+  inverseps=pquan(a,t,bz);
+  bz./tbz
+  
+  figure(1)
+  plot(log10(tbz));
+  hold on 
+  plot(log10(bz),'r+')
+  
+  h=cumsum(h)
+  figure(2)
+  plot(h,layp)
+  
+  figure(3)
+  plot(ps)
+  hold on 
+  plot(inverseps,'r+')
+  
+  fid1=fopen('H_invers.dat','w')
+      for k=1:1:len
+           fprintf(fid1,'%18.14f, %18.14f \n',t(k),bz(k));
+      end
+      fclose(fid1);
+      
+   fid2=fopen('H_invmodel.dat','w')
+       for k=1:1:len
+           fprintf(fid2,'%f, %f \n',h(k),layp(k));
+       end
+      fclose(fid2);
+toc
+
+
+function ps=pquan(a,t,tbz)
+% 该程序用来计算实际响应的全区视电阻率
+% a为发射回线半径，t为接收时间 tbz为实际响应
+len=length(t);
+u0=pi*4e-7;
+ps=zeros(len,1);
+ptemp=0;
+  for i=1:1:len
+       ptemp=fsolve(a,t(i),1,1000,tbz(i));
+       ps(i)=ptemp;
+  end
+
+
+function root=fsolve(a,t,x1,x2,xf) 
+%该程序用二分法来解不容易直接求解的方程
+% x1 x2 是预先设定的两个值，要保证在其闭区域之间仅能有一个根；
+ f1=0;  %设定两个端点的初值
+ f2=0;  
+ 
+ tempx=0;
+ ftemp=0;
+ temp1=fx(a,t,x1);
+ temp2=fx(a,t,x2);
+ f1=temp1/xf-1;   %子函数fx里面是方程的表达式，根据不同的场合改变 适合于f（x）-xf=0的情形
+ f2=temp2/xf-1;     %根据方程计算两个端点的值
+ 
+   while (f1*f2>0&&x1<x2)     %当出现双值的时候，修正第一个迭代点，直至出现单值
+          x1=1.1*x1;
+           temp1=fx(a,t,x1);
+           temp2=fx(a,t,x2);
+            f1=temp1/xf-1;  
+             f2=temp2/xf-1;    
+   end
+     
+ while (abs(x1-x2)>=0.1)
+      
+     if(f1*f2==0)     %处理刚好有一端是根的情况
+         if (f1==0)
+             root=x1;
+         else
+             root=x2;
+         end
+     end
+     
+   
+          
+     
+    % 二分法的具体实现过程
+     tempx=0.5*(x1+x2);
+     ftempx=fx(a,t,tempx);
+     ftemp=ftempx/xf-1;
+     if(f1*ftemp<0)
+         x2=tempx;
+         f2=ftemp;
+     else
+         x1=tempx;
+         f1=ftemp;
+     end
+     
+     if (abs(x1-x2)<0.1)  %如果两个端点的值的差小于设定的精度时 结束迭代
+         root=0.5*(x1+x2);  %设定最终的根是两个端点的平均
+         
+         end
+ end
+
